@@ -175,23 +175,6 @@ class GriefProtection extends PluginBase implements Listener {
                     "language_usage" => "Usage: /language <language>"
                 ];
                 break;
-            // Add other languages here
-            default:
-                $lang = [
-                    // Default language is English
-                    "area_claimed" => "Area has been claimed!",
-                    "already_claimed" => "You have already claimed an area.",
-                    "no_break_permission" => "You are not allowed to break here!",
-                    "no_place_permission" => "You are not allowed to place blocks here!",
-                    "console_not_allowed" => "This command can only be used by players.",
-                    "pos1_selected" => "Position 1 has been selected!",
-                    "addowner_usage" => "Usage: /addowner <player>",
-                    "owner_added" => "Owner added successfully!",
-                    "area_not_claimed" => "You have not claimed any area yet.",
-                    "player_not_found" => "Player not found or is not online.",
-                    "language_usage" => "Usage: /language <language>"
-                ];
-                break;
             case "indonesian":
                 $lang = [
                     "area_claimed" => "Area telah berhasil di-klaim!",
