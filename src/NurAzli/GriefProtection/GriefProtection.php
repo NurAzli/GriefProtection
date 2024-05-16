@@ -22,7 +22,7 @@ class GriefProtection extends PluginBase implements Listener {
     private $claimedAreas = [];
     private $language;
 
-    public function onEnable(){
+    public function onEnable():void{
         $this->getServer()->getPluginManager()->registerEvents($this, $this);
         $this->saveResource("config.yml");
         $config = new Config($this->getDataFolder() . "config.yml", Config::YAML);
