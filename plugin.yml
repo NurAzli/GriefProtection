@@ -1,0 +1,26 @@
+name: GriefProtection
+version: 1.0.0
+api: 5.0.0
+author: NurAzli
+main: NurAzli\GriefProtection\GriefProtection
+description: A grief protection plugin for PocketMine-MP.
+commands:
+  claim:
+    description: Claim an area to protect against griefing.
+    usage: /claim
+  addowner:
+    description: Add another player as an owner of your claimed area.
+    usage: /addowner <player>
+  language:
+    description: Change the language of plugin messages.
+    usage: /language <language>
+permissions:
+  griefprotection.claim:
+    description: Allows a player to claim an area.
+    default: true
+  griefprotection.addowner:
+    description: Allows a player to add another player as an owner of their claimed area.
+    default: true
+  griefprotection.language:
+    description: Allows a player to change the language of plugin messages.
+    default: op
