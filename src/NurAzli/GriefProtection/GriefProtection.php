@@ -3,65 +3,55 @@
 namespace NurAzli\GriefProtection;
 
 use pocketmine\plugin\PluginBase;
-use pocketmine\utils\Config;
-use pocketmine\utils\TextFormat as TF;
-use pocketmine\player\Player;
 use pocketmine\event\Listener;
 use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\player\PlayerInteractEvent;
-use pocketmine\item\VanillaItems;
-use pocketmine\math\Vector3;
+use pocketmine\player\Player;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
+use pocketmine\math\Vector3;
+use pocketmine\utils\Config;
 
-class GriefProtection extends PluginBase implements Listener
-{
+class GriefProtection extends PluginBase implements Listener {
+
     private array $protectedAreas = [];
-    private array $claimedAreas = [];
-    private string $language = "english";
+    private Config $data;
 
-    public function onEnable(): void
-    {
+    public function onEnable(): void {
         $this->getServer()->getPluginManager()->registerEvents($this, $this);
+
+        // Load or create configuration for protected areas
         $this->saveResource("config.yml");
-        $config = new Config($this->getDataFolder() . "config.yml", Config::YAML);
-        $this->language = $config->get("language", "english");
-        $this->getLogger()->info(TF::GREEN . "GriefProtection has been enabled.");
-        $this->initDatabase();
-        $this->loadAreasFromDatabase();
+        $this->data = new Config($this->getDataFolder() . "areas.json", Config::JSON);
+        $this->protectedAreas = $this->data->getAll();
+
+        $this->getLogger()->info("GriefProtection enabled successfully!");
     }
 
-    public function onCommand(CommandSender $sender, Command $cmd, string $label, array $args): bool
-    {
+    public function onDisable(): void {
+        // Save protected areas to file on disable
+        $this->data->setAll($this->protectedAreas);
+        $this->data->save();
+    }
+
+    public function onCommand(CommandSender $sender, Command $cmd, string $label, array $args): bool {
+        if (!$sender instanceof Player) {
+            $sender->sendMessage("This command can only be used in-game.");
+            return true;
+        }
+
         switch (strtolower($cmd->getName())) {
             case "claim":
-                if ($sender instanceof Player) {
-                    if (!in_array($sender->getName(), $this->claimedAreas)) {
-                        $this->claimArea($sender);
-                        $this->claimedAreas[] = $sender->getName();
-                    } else {
-                        $sender->sendMessage($this->translate("already_claimed"));
-                    }
-                } else {
-                    $sender->sendMessage($this->translate("console_not_allowed"));
-                }
+                $this->claimArea($sender);
                 return true;
 
             case "addowner":
-                if ($sender instanceof Player) {
-                    $this->addOwner($sender, $args);
-                } else {
-                    $sender->sendMessage($this->translate("console_not_allowed"));
-                }
-                return true;
-
-            case "language":
                 if (count($args) < 1) {
-                    $sender->sendMessage($this->translate("language_usage"));
+                    $sender->sendMessage("Usage: /addowner <player>");
                     return true;
                 }
-                $this->setLanguage($sender, $args[0]);
+                $this->addOwner($sender, $args[0]);
                 return true;
 
             default:
@@ -69,43 +59,61 @@ class GriefProtection extends PluginBase implements Listener
         }
     }
 
-    public function onBlockBreak(BlockBreakEvent $event): void
-    {
+    public function onBlockBreak(BlockBreakEvent $event): void {
         $player = $event->getPlayer();
         $pos = $event->getBlock()->getPosition();
-        if ($this->isProtected($pos)) {
-            if (!$this->hasPermission($player, "break")) {
-                $event->cancel();
-                $player->sendMessage($this->translate("no_break_permission"));
-            }
-        }
-    }
-
-    public function onBlockPlace(BlockPlaceEvent $event): void
-    {
-        $player = $event->getPlayer();
-        $pos = $event->getBlock()->getPosition();
-        if ($this->isProtected($pos)) {
-            if (!$this->hasPermission($player, "place")) {
-                $event->cancel();
-                $player->sendMessage($this->translate("no_place_permission"));
-            }
-        }
-    }
-
-    public function onPlayerInteract(PlayerInteractEvent $event): void
-    {
-        $player = $event->getPlayer();
-        $item = $event->getItem();
-        $block = $event->getBlock();
-        if ($item->equals(VanillaItems::GOLDEN_SHOVEL())) {
-            $this->selectArea($player, $block->getPosition());
+        if ($this->isProtected($pos) && !$this->hasPermission($player, $pos)) {
             $event->cancel();
+            $player->sendMessage("You are not allowed to break blocks here!");
         }
     }
 
-    public function isProtected(Vector3 $pos): bool
-    {
+    public function onBlockPlace(BlockPlaceEvent $event): void {
+        $player = $event->getPlayer();
+        $pos = $event->getBlock()->getPosition();
+        if ($this->isProtected($pos) && !$this->hasPermission($player, $pos)) {
+            $event->cancel();
+            $player->sendMessage("You are not allowed to place blocks here!");
+        }
+    }
+
+    public function onPlayerInteract(PlayerInteractEvent $event): void {
+        $player = $event->getPlayer();
+        $block = $event->getBlock();
+        if ($this->isProtected($block->getPosition()) && !$this->hasPermission($player, $block->getPosition())) {
+            $event->cancel();
+            $player->sendMessage("You are not allowed to interact here!");
+        }
+    }
+
+    private function claimArea(Player $player): void {
+        $pos = $player->getPosition();
+        $area = [
+            'minX' => $pos->getX() - 10,
+            'maxX' => $pos->getX() + 10,
+            'minY' => $pos->getY() - 10,
+            'maxY' => $pos->getY() + 10,
+            'minZ' => $pos->getZ() - 10,
+            'maxZ' => $pos->getZ() + 10,
+            'owners' => [$player->getName()]
+        ];
+
+        $this->protectedAreas[] = $area;
+        $player->sendMessage("You have successfully claimed a protected area!");
+    }
+
+    private function addOwner(Player $player, string $ownerName): void {
+        $areaIndex = $this->getPlayerAreaIndex($player);
+        if ($areaIndex === -1) {
+            $player->sendMessage("You do not own any area to add an owner.");
+            return;
+        }
+
+        $this->protectedAreas[$areaIndex]['owners'][] = $ownerName;
+        $player->sendMessage("$ownerName has been added as an owner to your area.");
+    }
+
+    private function isProtected(Vector3 $pos): bool {
         foreach ($this->protectedAreas as $area) {
             if (
                 $pos->getX() >= $area['minX'] && $pos->getX() <= $area['maxX'] &&
@@ -118,98 +126,26 @@ class GriefProtection extends PluginBase implements Listener
         return false;
     }
 
-    public function hasPermission(Player $player, string $action): bool
-    {
-        return $player->isOp();
-    }
-
-    public function claimArea(Player $player): void
-    {
-        $pos = $player->getPosition();
-        $area = [
-            'minX' => $pos->getX() - 15,
-            'maxX' => $pos->getX() + 15,
-            'minY' => $pos->getY() - 15,
-            'maxY' => $pos->getY() + 15,
-            'minZ' => $pos->getZ() - 15,
-            'maxZ' => $pos->getZ() + 15,
-            'owners' => [$player->getName()]
-        ];
-        $this->protectedAreas[] = $area;
-        $player->sendMessage($this->translate("area_claimed"));
-        $this->saveAreaToDatabase($area);
-    }
-
-    public function selectArea(Player $player, Vector3 $block): void
-    {
-        $this->protectedAreas[$player->getName()]['pos1'] = $block;
-        $player->sendMessage($this->translate("pos1_selected"));
-    }
-
-    public function initDatabase(): void
-    {
-        $db = new \SQLite3($this->getDataFolder() . "griefprotection.db");
-        $db->exec("CREATE TABLE IF NOT EXISTS protected_areas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            min_x FLOAT,
-            max_x FLOAT,
-            min_y FLOAT,
-            max_y FLOAT,
-            min_z FLOAT,
-            max_z FLOAT,
-            owners TEXT
-        )");
-        $db->close();
-    }
-
-    public function saveAreaToDatabase(array $area): void
-    {
-        $db = new \SQLite3($this->getDataFolder() . "griefprotection.db");
-        $owners = implode(",", $area['owners']);
-        $statement = $db->prepare("INSERT INTO protected_areas (min_x, max_x, min_y, max_y, min_z, max_z, owners)
-                                    VALUES (:minX, :maxX, :minY, :maxY, :minZ, :maxZ, :owners)");
-        $statement->bindValue(":minX", $area['minX']);
-        $statement->bindValue(":maxX", $area['maxX']);
-        $statement->bindValue(":minY", $area['minY']);
-        $statement->bindValue(":maxY", $area['maxY']);
-        $statement->bindValue(":minZ", $area['minZ']);
-        $statement->bindValue(":maxZ", $area['maxZ']);
-        $statement->bindValue(":owners", $owners);
-        $statement->execute();
-        $db->close();
-    }
-
-    public function loadAreasFromDatabase(): void
-    {
-        $db = new \SQLite3($this->getDataFolder() . "griefprotection.db");
-        $result = $db->query("SELECT * FROM protected_areas");
-        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            $owners = explode(",", $row['owners']);
-            $area = [
-                'minX' => $row['min_x'],
-                'maxX' => $row['max_x'],
-                'minY' => $row['min_y'],
-                'maxY' => $row['max_y'],
-                'minZ' => $row['min_z'],
-                'maxZ' => $row['max_z'],
-                'owners' => $owners
-            ];
-            $this->protectedAreas[] = $area;
+    private function hasPermission(Player $player, Vector3 $pos): bool {
+        foreach ($this->protectedAreas as $area) {
+            if (
+                $pos->getX() >= $area['minX'] && $pos->getX() <= $area['maxX'] &&
+                $pos->getY() >= $area['minY'] && $pos->getY() <= $area['maxY'] &&
+                $pos->getZ() >= $area['minZ'] && $pos->getZ() <= $area['maxZ'] &&
+                in_array($player->getName(), $area['owners'], true)
+            ) {
+                return true;
+            }
         }
-        $db->close();
+        return false;
     }
 
-    private function translate(string $key): string
-    {
-        $translations = [
-            "area_claimed" => "Area has been claimed!",
-            "already_claimed" => "You have already claimed an area.",
-            "no_break_permission" => "You are not allowed to break here!",
-            "no_place_permission" => "You are not allowed to place blocks here!",
-            "console_not_allowed" => "This command can only be used by players.",
-            "pos1_selected" => "Position 1 has been selected!"
-        ];
-
-        return $translations[$key] ?? "Translation not found.";
+    private function getPlayerAreaIndex(Player $player): int {
+        foreach ($this->protectedAreas as $index => $area) {
+            if (in_array($player->getName(), $area['owners'], true)) {
+                return $index;
+            }
+        }
+        return -1;
     }
 }
