@@ -17,41 +17,71 @@ class GriefProtection extends PluginBase implements Listener {
 
     private array $protectedAreas = [];
     private Config $data;
+    private int $maxAreasPerPlayer = 3;
+    private int $claimSize = 10;
 
     public function onEnable(): void {
         $this->getServer()->getPluginManager()->registerEvents($this, $this);
-
-        // Load or create configuration for protected areas
         $this->saveResource("config.yml");
         $this->data = new Config($this->getDataFolder() . "areas.json", Config::JSON);
         $this->protectedAreas = $this->data->getAll();
-
-        $this->getLogger()->info("GriefProtection enabled successfully!");
     }
 
     public function onDisable(): void {
-        // Save protected areas to file on disable
         $this->data->setAll($this->protectedAreas);
         $this->data->save();
     }
 
     public function onCommand(CommandSender $sender, Command $cmd, string $label, array $args): bool {
-        if (!$sender instanceof Player) {
-            $sender->sendMessage("This command can only be used in-game.");
+        if (!$sender instanceof Player && !in_array(strtolower($cmd->getName()), ["setmaxareas", "clearallareas"], true)) {
             return true;
         }
 
         switch (strtolower($cmd->getName())) {
             case "claim":
+                if ($this->getPlayerAreaCount($sender) >= $this->maxAreasPerPlayer) {
+                    return true;
+                }
                 $this->claimArea($sender);
                 return true;
 
-            case "addowner":
+            case "protectinfo":
+                $this->showProtectInfo($sender);
+                return true;
+
+            case "transferowner":
                 if (count($args) < 1) {
-                    $sender->sendMessage("Usage: /addowner <player>");
                     return true;
                 }
-                $this->addOwner($sender, $args[0]);
+                $this->transferOwner($sender, $args[0]);
+                return true;
+
+            case "clearallareas":
+                if (!$sender->hasPermission("griefprotection.admin")) {
+                    return true;
+                }
+                $this->clearAllAreas();
+                return true;
+
+            case "setmaxareas":
+                if (!$sender->hasPermission("griefprotection.admin")) {
+                    return true;
+                }
+                if (count($args) < 1 || !is_numeric($args[0])) {
+                    return true;
+                }
+                $this->setMaxAreas((int)$args[0]);
+                return true;
+
+            case "listareas":
+                $this->listAreas($sender);
+                return true;
+
+            case "setarea":
+                if (count($args) < 1 || !is_numeric($args[0])) {
+                    return true;
+                }
+                $this->setAreaSize($sender, (int)$args[0]);
                 return true;
 
             default:
@@ -59,85 +89,57 @@ class GriefProtection extends PluginBase implements Listener {
         }
     }
 
-    public function onBlockBreak(BlockBreakEvent $event): void {
-        $player = $event->getPlayer();
-        $pos = $event->getBlock()->getPosition();
-        if ($this->isProtected($pos) && !$this->hasPermission($player, $pos)) {
-            $event->cancel();
-            $player->sendMessage("You are not allowed to break blocks here!");
+    private function setAreaSize(Player $player, int $size): void {
+        if ($size < 5 || $size > 50) {
+            return;
+        }
+        $this->claimSize = $size;
+    }
+
+    private function listAreas(Player $player): void {
+        $areas = [];
+        foreach ($this->protectedAreas as $area) {
+            if (in_array($player->getName(), $area['owners'], true)) {
+                $areas[] = "Bounds: X({$area['minX']}-{$area['maxX']}), Y({$area['minY']}-{$area['maxY']}), Z({$area['minZ']}-{$area['maxZ']})";
+            }
+        }
+        if (empty($areas)) {
+            return;
         }
     }
 
-    public function onBlockPlace(BlockPlaceEvent $event): void {
-        $player = $event->getPlayer();
-        $pos = $event->getBlockAgainst()->getPosition();
-        if ($this->isProtected($pos) && !$this->hasPermission($player, $pos)) {
-            $event->cancel();
-            $player->sendMessage("You are not allowed to place blocks here!");
-        }
-    }
-
-    public function onPlayerInteract(PlayerInteractEvent $event): void {
-        $player = $event->getPlayer();
-        $block = $event->getBlock();
-        if ($this->isProtected($block->getPosition()) && !$this->hasPermission($player, $block->getPosition())) {
-            $event->cancel();
-            $player->sendMessage("You are not allowed to interact here!");
-        }
-    }
-
-    private function claimArea(Player $player): void {
+    private function showProtectInfo(Player $player): void {
         $pos = $player->getPosition();
-        $area = [
-            'minX' => $pos->getX() - 10,
-            'maxX' => $pos->getX() + 10,
-            'minY' => $pos->getY() - 10,
-            'maxY' => $pos->getY() + 10,
-            'minZ' => $pos->getZ() - 10,
-            'maxZ' => $pos->getZ() + 10,
-            'owners' => [$player->getName()]
-        ];
-
-        $this->protectedAreas[] = $area;
-        $player->sendMessage("You have successfully claimed a protected area!");
+        foreach ($this->protectedAreas as $area) {
+            if ($this->isInsideArea($pos, $area)) {
+                return;
+            }
+        }
     }
 
-    private function addOwner(Player $player, string $ownerName): void {
+    private function transferOwner(Player $player, string $newOwner): void {
         $areaIndex = $this->getPlayerAreaIndex($player);
         if ($areaIndex === -1) {
-            $player->sendMessage("You do not own any area to add an owner.");
             return;
         }
 
-        $this->protectedAreas[$areaIndex]['owners'][] = $ownerName;
-        $player->sendMessage("$ownerName has been added as an owner to your area.");
+        $this->protectedAreas[$areaIndex]['owners'] = [$newOwner];
     }
 
-    private function isProtected(Vector3 $pos): bool {
-        foreach ($this->protectedAreas as $area) {
-            if (
-                $pos->getX() >= $area['minX'] && $pos->getX() <= $area['maxX'] &&
-                $pos->getY() >= $area['minY'] && $pos->getY() <= $area['maxY'] &&
-                $pos->getZ() >= $area['minZ'] && $pos->getZ() <= $area['maxZ']
-            ) {
-                return true;
-            }
-        }
-        return false;
+    private function clearAllAreas(): void {
+        $this->protectedAreas = [];
     }
 
-    private function hasPermission(Player $player, Vector3 $pos): bool {
-        foreach ($this->protectedAreas as $area) {
-            if (
-                $pos->getX() >= $area['minX'] && $pos->getX() <= $area['maxX'] &&
-                $pos->getY() >= $area['minY'] && $pos->getY() <= $area['maxY'] &&
-                $pos->getZ() >= $area['minZ'] && $pos->getZ() <= $area['maxZ'] &&
-                in_array($player->getName(), $area['owners'], true)
-            ) {
-                return true;
-            }
-        }
-        return false;
+    private function setMaxAreas(int $max): void {
+        $this->maxAreasPerPlayer = $max;
+    }
+
+    private function isInsideArea(Vector3 $pos, array $area): bool {
+        return (
+            $pos->x >= $area['minX'] && $pos->x <= $area['maxX'] &&
+            $pos->y >= $area['minY'] && $pos->y <= $area['maxY'] &&
+            $pos->z >= $area['minZ'] && $pos->z <= $area['maxZ']
+        );
     }
 
     private function getPlayerAreaIndex(Player $player): int {
@@ -147,5 +149,29 @@ class GriefProtection extends PluginBase implements Listener {
             }
         }
         return -1;
+    }
+
+    private function claimArea(Player $player): void {
+        $pos = $player->getPosition();
+        $area = [
+            'minX' => $pos->x - $this->claimSize,
+            'maxX' => $pos->x + $this->claimSize,
+            'minY' => $pos->y - $this->claimSize,
+            'maxY' => $pos->y + $this->claimSize,
+            'minZ' => $pos->z - $this->claimSize,
+            'maxZ' => $pos->z + $this->claimSize,
+            'owners' => [$player->getName()]
+        ];
+        $this->protectedAreas[] = $area;
+    }
+
+    private function getPlayerAreaCount(Player $player): int {
+        $count = 0;
+        foreach ($this->protectedAreas as $area) {
+            if (in_array($player->getName(), $area['owners'], true)) {
+                $count++;
+            }
+        }
+        return $count;
     }
 }
