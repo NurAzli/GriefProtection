@@ -70,7 +70,7 @@ class GriefProtection extends PluginBase implements Listener {
 
     public function onBlockPlace(BlockPlaceEvent $event): void {
         $player = $event->getPlayer();
-        $pos = $event->getBlock()->getPosition();
+        $pos = $event->getBlockAgainst()->getPosition();
         if ($this->isProtected($pos) && !$this->hasPermission($player, $pos)) {
             $event->cancel();
             $player->sendMessage("You are not allowed to place blocks here!");
